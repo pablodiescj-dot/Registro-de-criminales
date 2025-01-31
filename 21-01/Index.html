@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestión de Criminales</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="styles.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+    <div class="container my-4">
+        <h1 class="text-center">Gestión de Criminales</h1>
+        
+        <!-- Formulario de Registro -->
+        <form id="criminalForm" class="mt-4">
+            <div class="mb-3">
+                <label for="nombre" class="form-label">Nombre del Criminal:</label>
+                <input type="text" class="form-control" id="nombre" required>
+            </div>
+            <div class="mb-3">
+                <label for="fecha" class="form-label">Fecha de Detención:</label>
+                <input type="date" class="form-control" id="fecha">
+            </div>
+            <div class="mb-3">
+                <label for="hechos" class="form-label">Hechos Cometidos:</label>
+                <input type="text" class="form-control" id="hechos" required>
+            </div>
+            <div class="mb-3">
+                <label for="foto" class="form-label">Fotografía:</label>
+                <input type="file" class="form-control" id="foto" accept="image/*" required>
+            </div>
+            <div class="mb-3">
+                <label for="informe" class="form-label">Informe (PDF):</label>
+                <input type="file" class="form-control" id="informe" accept="application/pdf" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Registrar Criminal</button>
+        </form>
+
+        <!-- Consultas -->
+        <h2 class="mt-5">Consultas</h2>
+        <div class="list-group">
+            <button id="mostrarTodos" class="list-group-item list-group-item-action">Mostrar Todos los Criminales</button>
+            <button id="listarLibertad" class="list-group-item list-group-item-action">Listar Criminales en Libertad</button>
+            <button id="mostrarFotos" class="list-group-item list-group-item-action">Mostrar Fotografías Almacenadas</button>
+        </div>
+
+        <div class="mt-4">
+            <input type="text" class="form-control" id="buscarNombre" placeholder="Buscar por nombre">
+            <button id="buscar" class="btn btn-secondary mt-2 w-100">Buscar Criminal</button>
+        </div>
+
+        <!-- Botón para exportar a CSV -->
+        <button id="exportarCSV" class="btn btn-success mt-2">Exportar a CSV</button>
+
+        <!-- Botón para generar reporte -->
+        <button id="generarReporte" class="btn btn-info mt-2">Generar Reporte PDF</button>
+
+        <div id="resultado" class="mt-4"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.min.js"></script>
+    <script>
+        // db= Base de datos
+        let db;
+
+        // Abrimos la base de datos 
+        const request = indexedDB.open("CriminalDB", 1);
+
+        // Base de datos creada o actualizada
+        request.onupgradeneeded = (event) => {
+            db = event.target.result;
+
+            if (!db.objectStoreNames.contains("criminales")) {
+                const store = db.createObjectStore("criminales", { keyPath: "id", autoIncrement: true });
+                store.createIndex("nombre", "nombre", { unique: false });
+                store.createIndex("fecha", "fecha", { unique: false });
+            }
+        };
+
+        // Todo ha ido bien
+        request.onsuccess = (event) => {
+            db = event.target.result;
+        };
+
+        // Ha habido un error
+        request.onerror = (event) => {
+            console.error("Error al abrir la base de datos:", event.target.error);
+        };
+
+        // Evento del botón de envío de criminales
+        document.getElementById("criminalForm").addEventListener("submit", (event) => {
+            event.preventDefault();
+            registrarCriminal();
+        });
+
+        // Registramos un nuevo criminal en la BBDD
+        function registrarCriminal() {
+            const nombre = document.getElementById("nombre").value;
+            const fecha = document.getElementById("fecha").value;
+            const hechos = document.getElementById("hechos").value; // Nuevo campo
+            const foto = document.getElementById("foto").files[0];
+            const informe = document.getElementById("informe").files[0];
+
+            const readerImage = new FileReader();
+            const readerDocument = new FileReader();
+
+            readerImage.onload = (event) => {
+                const fotoData = event.target.result; 
+                readerDocument.onload = (event) => {
+                    const informeData = event.target.result; 
+
+                    const registro = {
+                        nombre: nombre,
+                        fecha: fecha,
+                        hechos: hechos, // Almacenar los hechos
+                        foto: fotoData,
+                        informe: informeData
+                    };
+
+                    const transaction = db.transaction(["criminales"], "readwrite");
+                    const store = transaction.objectStore("criminales");
+                    store.add(registro); 
+
+                    transaction.oncomplete = () => {
+                        console.log("Registro añadido:", registro);
+                        mostrarMensaje("Registro añadido con éxito.");
+                    };
+
+                    transaction.onerror = (event) => {
+                        console.error("Error al añadir el registro:", event.target.error);
+                    };
+                };
+
+                readerDocument.readAsDataURL(informe);
+            };
+
+            readerImage.readAsDataURL(foto);
+        }
+
+        // Consultas
+        document.getElementById("mostrarTodos").addEventListener("click", mostrarTodos);
+        document.getElementById("listarLibertad").addEventListener("click", listarLibertad);
+        document.getElementById("mostrarFotos").addEventListener("click", mostrarFotos);
+        document.getElementById("buscar").addEventListener("click", buscarPorNombre);
+        document.getElementById("exportarCSV").addEventListener("click", exportarCSV);
+        document.getElementById("generarReporte").addEventListener("click", generarReporte);
+
+        // Mostrar todos los criminales
+        function mostrarTodos() {
+            const transaction = db.transaction(["criminales"], "readonly");
+            const store = transaction.objectStore("criminales");
+            const consulta = store.getAll();
+
+            consulta.onsuccess = (event) => {
+                const criminales = event.target.result; 
+                mostrarResultado(criminales);
+            };
+        }
+
+        // Mostrar todos los criminales SIN FECHA DE DETENCION, es decir, en libertad.
+        function listarLibertad() {
+            const transaction = db.transaction(["criminales"], "readonly");
+            const store = transaction.objectStore("criminales");
+            const consulta = store.getAll();
+
+            consulta.onsuccess = (event) => {
+                const criminales = event.target.result;
+                const enLibertad = criminales.filter(criminal => !criminal.fecha);
+                mostrarResultado(enLibertad);
+            };
+        }
+
+        // Listamos las fotos en DIV
+        function mostrarFotos() {
+            const transaction = db.transaction(["criminales"], "readonly");
+            const store = transaction.objectStore("criminales");
+            const consulta = store.getAll();
+
+            consulta.onsuccess = (event) => {
+                const criminales = event.target.result;
+                const fotos = criminales.map(criminal => ({ nombre: criminal.nombre, foto: criminal.foto }));
+                mostrarResultadoFotos(fotos);
+            };
+        }
+
+        // Función para mostrar los resultados de criminales
+        function mostrarResultado(data) {
+            const resultadoDiv = document.getElementById("resultado");
+            resultadoDiv.innerHTML = ""; 
+
+            if (data.length === 0) {
+                resultadoDiv.innerHTML = "<p>No se encontraron resultados.</p>";
+                return;
+            }
+
+            const table = document.createElement("table");
+            table.className = "table table-striped";
+            const thead = document.createElement("thead");
+            const tbody = document.createElement("tbody");
+
+            thead.innerHTML = "<tr><th>Nombre</th><th>Fecha</th><th>Hechos Cometidos</th><th>Fotografía</th><th>Acciones</th></tr>";
+            table.appendChild(thead);
+
+            data.forEach(item => {
+                const row = document.createElement("tr");
+                const fecha = item.fecha || 'En libertad';
+
+                const nombreCell = document.createElement("td");
+                nombreCell.textContent = item.nombre;
+                row.appendChild(nombreCell);
+
+                const fechaCell = document.createElement("td");
+                fechaCell.textContent = fecha;
+                row.appendChild(fechaCell);
+
+                const hechosCell = document.createElement("td");
+                hechosCell.textContent = item.hechos; // Mostrar los hechos
+                row.appendChild(hechosCell);
+
+                const fotoCell = document.createElement("td");
+                const img = document.createElement("img");
+                img.src = item.foto; 
+                img.style.width = "100px"; // Ajusta el tamaño de la imagen
+                fotoCell.appendChild(img);
+                row.appendChild(fotoCell);
+
+                const accionesCell = document.createElement("td");
+                const downloadLink = document.createElement("a");
+                downloadLink.href = item.informe;
+                downloadLink.download = `${item.nombre}_informe.pdf`;
+                downloadLink.textContent = "Descargar PDF";
+                downloadLink.className = "btn btn-link";
+                accionesCell.appendChild(downloadLink);
+                row.appendChild(accionesCell);
+
+                tbody.appendChild(row);
+            });
+
+            table.appendChild(tbody);
+            resultadoDiv.appendChild(table);
+        }
+
+        // Función para mostrar las fotos en una tabla
+        function mostrarResultadoFotos(data) {
+            const resultadoDiv = document.getElementById("resultado");
+            resultadoDiv.innerHTML = ""; 
+
+            if (data.length === 0) {
+                resultadoDiv.innerHTML = "<p>No se encontraron resultados.</p>";
+                return;
+            }
+
+            const table = document.createElement("table");
+            table.className = "table table-striped";
+            const thead = document.createElement("thead");
+            const tbody = document.createElement("tbody");
+
+            thead.innerHTML = "<tr><th>Nombre</th><th>Fotografía</th></tr>";
+            table.appendChild(thead);
+
+            data.forEach(item => {
+                const row = document.createElement("tr");
+
+                const nombreCell = document.createElement("td");
+                nombreCell.textContent = item.nombre;
+                row.appendChild(nombreCell);
+
+                const fotoCell = document.createElement("td");
+                const img = document.createElement("img");
+                img.src = item.foto; 
+                img.style.width = "100px"; // Ajusta el tamaño de la imagen
+                fotoCell.appendChild(img);
+                row.appendChild(fotoCell);
+
+                tbody.appendChild(row);
+            });
+
+            table.appendChild(tbody);
+            resultadoDiv.appendChild(table);
+        }
+
+        // Función para buscar un criminal por su nombre
+        function buscarPorNombre() {
+            const nombreBuscado = document.getElementById("buscarNombre").value.toLowerCase();
+            const transaction = db.transaction(["criminales"], "readonly");
+            const store = transaction.objectStore("criminales");
+            const index = store.index("nombre");
+
+            const resultado = [];
+
+            index.openCursor().onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    if (cursor.value.nombre.toLowerCase().includes(nombreBuscado)) {
+                        resultado.push(cursor.value);
+                    }
+                    cursor.continue();
+                } else {
+                    mostrarResultado(resultado);
+                }
+            };
+        }
+
+        // Función para mostrar mensajes en la interfaz
+        function mostrarMensaje(mensaje) {
+            const resultadoDiv = document.getElementById("resultado");
+            resultadoDiv.innerHTML = `<p>${mensaje}</p>`;
+        }
+
+        // Función para exportar a CSV
+        function exportarCSV() {
+            const transaction = db.transaction(["criminales"], "readonly");
+            const store = transaction.objectStore("criminales");
+            const consulta = store.getAll();
+
+            consulta.onsuccess = (event) => {
+                const criminales = event.target.result;
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "Nombre,Fecha,Hechos Cometidos\n"; // Añadir encabezado para hechos
+
+                criminales.forEach(criminal => {
+                    const fecha = criminal.fecha || 'En libertad';
+                    const row = `${criminal.nombre},${fecha},${criminal.hechos}`; // Incluir hechos
+                    csvContent += row + "\n";
+                });
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", "criminales.csv");
+                document.body.appendChild(link);
+
+                link.click();
+            };
+        }
+
+        // Función para generar el reporte
+        document.getElementById("generarReporte").onclick = () => {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.text("Reporte de Criminales", 20, 20);
+
+            const transaction = db.transaction(["criminales"], "readonly");
+            const objectStore = transaction.objectStore("criminales");
+            const request = objectStore.getAll();
+
+            request.onsuccess = (event) => {
+                const criminales = event.target.result;
+                let y = 30; 
+                criminales.forEach(criminal => {
+                    doc.text(`Nombre: ${criminal.nombre}, Fecha de Detención: ${criminal.fecha || 'En libertad'}, Hechos: ${criminal.hechos}`, 20, y);
+                    y += 10; 
+                });
+                doc.save("reporte_criminales.pdf");
+            };
+        };
+    </script>
+</body>
+</html>
